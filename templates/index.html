@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ISL Interpreter</title>
+
+<style>
+    body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+        background: #0f172a;
+        color: white;
+        text-align: center;
+    }
+
+    h1 {
+        margin: 20px;
+        font-size: 28px;
+    }
+
+    .container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 20px;
+    }
+
+    video {
+        width: 400px;
+        height: 300px;
+        border-radius: 15px;
+        background: black;
+        border: 3px solid #38bdf8;
+    }
+
+    canvas {
+        display: none;
+    }
+
+    .output {
+        width: 400px;
+        min-height: 60px;
+        background: #1e293b;
+        border-radius: 10px;
+        padding: 15px;
+        font-size: 20px;
+        font-weight: bold;
+    }
+
+    .confidence {
+        width: 400px;
+        font-size: 14px;
+        color: #94a3b8;
+        margin-top: -10px;
+    }
+
+    .buttons {
+        display: flex;
+        gap: 15px;
+    }
+
+    button {
+        padding: 10px 20px;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 16px;
+        font-weight: bold;
+    }
+
+    .start { background: #22c55e; color: black; }
+    .stop { background: #ef4444; color: white; }
+    .speak { background: #3b82f6; color: white; }
+
+    button:hover {
+        opacity: 0.8;
+    }
+
+    .status {
+        font-size: 12px;
+        color: #64748b;
+        margin-top: 10px;
+    }
+</style>
+</head>
+
+<body>
+
+<h1>🤟 ISL Interpreter</h1>
+
+<div class="container">
+
+    <!-- Camera -->
+    <video id="webcam" autoplay playsinline></video>
+    <canvas id="canvas"></canvas>
+
+    <!-- Output -->
+    <div class="output" id="prediction">
+        Waiting for prediction...
+    </div>
+    <div class="confidence" id="confidence"></div>
+
+    <!-- Buttons -->
+    <div class="buttons">
+        <button class="start" onclick="startCamera()">Start</button>
+        <button class="stop" onclick="stopCamera()">Stop</button>
+        <button class="speak" onclick="speakText()">Speak</button>
+    </div>
+
+    <div class="status" id="status">Ready</div>
+
+</div>
+
+<script>
+let video = document.getElementById("webcam");
+let canvas = document.getElementById("canvas");
+let predictionBox = document.getElementById("prediction");
+let confidenceBox = document.getElementById("confidence");
+let statusBox = document.getElementById("status");
+let stream;
+let isRunning = false;
+let captureInterval;
+
+// Start Camera
+async function startCamera() {
+    try {
+        stream = await navigator.mediaDevices.getUserMedia({ 
+            video: { width: 400, height: 300 } 
+        });
+        video.srcObject = stream;
+        isRunning = true;
+        statusBox.innerText = "Camera active - Processing frames...";
+        startPredictions();
+    } catch (error) {
+        statusBox.innerText = "❌ Camera access denied";
+        alert("Please allow camera access");
+    }
+}
+
+// Stop Camera
+function stopCamera() {
+    if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        isRunning = false;
+        clearInterval(captureInterval);
+        predictionBox.innerText = "Camera stopped";
+        confidenceBox.innerText = "";
+        statusBox.innerText = "Camera stopped";
+    }
+}
+
+// Send frames to backend for prediction
+function startPredictions() {
+    captureInterval = setInterval(() => {
+        if (!isRunning) return;
+
+        // Draw video frame to canvas
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        let ctx = canvas.getContext("2d");
+        ctx.drawImage(video, 0, 0);
+
+        // Convert canvas to blob and send to server
+        canvas.toBlob(blob => {
+            let formData = new FormData();
+            formData.append("frame", blob);
+
+            fetch("/predict", {
+                method: "POST",
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                predictionBox.innerText = data.letter || "No hand detected";
+                confidenceBox.innerText = data.confidence ? 
+                    `Confidence: ${(data.confidence * 100).toFixed(1)}%` : "";
+                statusBox.innerText = "Processing...";
+            })
+            .catch(error => {
+                statusBox.innerText = "⚠️ Server error";
+            });
+        }, "image/jpeg", 0.8);
+    }, 500); // Send frame every 500ms
+}
+
+// Text to Speech
+function speakText() {
+    let text = predictionBox.innerText;
+    if (text === "Waiting for prediction..." || text === "Camera stopped" || text === "No hand detected") {
+        return;
+    }
+    
+    let speech = new SpeechSynthesisUtterance(text);
+    speech.lang = "en-US";
+    speech.rate = 1.0;
+    window.speechSynthesis.speak(speech);
+}
+</script>
+
+</body>
+</html>
