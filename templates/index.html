@@ -124,16 +124,37 @@ let captureInterval;
 // Start Camera
 async function startCamera() {
     try {
+        statusBox.innerText = "🔵 Requesting camera access...";
+        
         stream = await navigator.mediaDevices.getUserMedia({ 
-            video: { width: 400, height: 300 } 
+            video: { 
+                width: { ideal: 400 }, 
+                height: { ideal: 300 },
+                facingMode: 'user'
+            },
+            audio: false
         });
+        
         video.srcObject = stream;
         isRunning = true;
-        statusBox.innerText = "Camera active - Processing frames...";
-        startPredictions();
+        statusBox.innerText = "🟢 Camera active - Processing frames...";
+        
+        // Wait for video to be ready
+        video.onloadedmetadata = () => {
+            startPredictions();
+        };
     } catch (error) {
+        console.error("Camera error:", error);
         statusBox.innerText = "❌ Camera access denied";
-        alert("Please allow camera access");
+        predictionBox.innerText = "Camera access required";
+        
+        if (error.name === 'NotAllowedError') {
+            alert("❌ Camera permission denied. Please allow camera access and reload.");
+        } else if (error.name === 'NotFoundError') {
+            alert("❌ No camera found. Please check your device.");
+        } else {
+            alert("❌ Error: " + error.message);
+        }
     }
 }
 
@@ -141,45 +162,65 @@ async function startCamera() {
 function stopCamera() {
     if (stream) {
         stream.getTracks().forEach(track => track.stop());
-        isRunning = false;
-        clearInterval(captureInterval);
-        predictionBox.innerText = "Camera stopped";
-        confidenceBox.innerText = "";
-        statusBox.innerText = "Camera stopped";
+        stream = null;
     }
+    isRunning = false;
+    clearInterval(captureInterval);
+    predictionBox.innerText = "Camera stopped";
+    confidenceBox.innerText = "";
+    statusBox.innerText = "⚫ Camera stopped";
 }
 
 // Send frames to backend for prediction
 function startPredictions() {
     captureInterval = setInterval(() => {
-        if (!isRunning) return;
+        if (!isRunning || !video.srcObject) return;
 
-        // Draw video frame to canvas
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        let ctx = canvas.getContext("2d");
-        ctx.drawImage(video, 0, 0);
+        try {
+            // Draw video frame to canvas
+            if (video.videoWidth > 0 && video.videoHeight > 0) {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                let ctx = canvas.getContext("2d");
+                ctx.drawImage(video, 0, 0);
 
-        // Convert canvas to blob and send to server
-        canvas.toBlob(blob => {
-            let formData = new FormData();
-            formData.append("frame", blob);
+                // Convert canvas to blob and send to server
+                canvas.toBlob(blob => {
+                    if (!blob) return;
+                    
+                    let formData = new FormData();
+                    formData.append("frame", blob, "frame.jpg");
 
-            fetch("/predict", {
-                method: "POST",
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                predictionBox.innerText = data.letter || "No hand detected";
-                confidenceBox.innerText = data.confidence ? 
-                    `Confidence: ${(data.confidence * 100).toFixed(1)}%` : "";
-                statusBox.innerText = "Processing...";
-            })
-            .catch(error => {
-                statusBox.innerText = "⚠️ Server error";
-            });
-        }, "image/jpeg", 0.8);
+                    fetch("/predict", {
+                        method: "POST",
+                        body: formData
+                    })
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        if (data.error) {
+                            statusBox.innerText = "⚠️ Error: " + data.error;
+                        } else {
+                            predictionBox.innerText = data.letter || "No hand detected";
+                            confidenceBox.innerText = data.confidence ? 
+                                `Confidence: ${(data.confidence * 100).toFixed(1)}%` : "";
+                            statusBox.innerText = "🟢 Processing...";
+                        }
+                    })
+                    .catch(error => {
+                        console.error("Fetch error:", error);
+                        statusBox.innerText = "⚠️ Server error: " + error.message;
+                    });
+                }, "image/jpeg", 0.8);
+            }
+        } catch (e) {
+            console.error("Prediction error:", e);
+            statusBox.innerText = "⚠️ Error: " + e.message;
+        }
     }, 500); // Send frame every 500ms
 }
 
@@ -187,14 +228,36 @@ function startPredictions() {
 function speakText() {
     let text = predictionBox.innerText;
     if (text === "Waiting for prediction..." || text === "Camera stopped" || text === "No hand detected") {
+        alert("Please make a valid hand gesture first!");
         return;
     }
     
-    let speech = new SpeechSynthesisUtterance(text);
-    speech.lang = "en-US";
-    speech.rate = 1.0;
-    window.speechSynthesis.speak(speech);
+    try {
+        let speech = new SpeechSynthesisUtterance(text);
+        speech.lang = "en-US";
+        speech.rate = 1.0;
+        speech.pitch = 1.0;
+        window.speechSynthesis.speak(speech);
+        statusBox.innerText = "🔊 Speaking...";
+    } catch (e) {
+        console.error("Speech error:", e);
+        alert("Text-to-speech not supported in your browser");
+    }
 }
+
+// Check server health on page load
+window.addEventListener('load', () => {
+    fetch('/health')
+        .then(r => r.json())
+        .then(data => {
+            console.log("Server health:", data);
+            if (!data.model_loaded) {
+                statusBox.innerText = "⚠️ Model not loaded. Check console.";
+                alert("Model failed to load. Check server logs.");
+            }
+        })
+        .catch(e => console.error("Health check failed:", e));
+});
 </script>
 
 </body>
