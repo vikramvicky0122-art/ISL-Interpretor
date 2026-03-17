@@ -77,21 +77,37 @@ except Exception as e:
 def extract_landmarks(frame):
     """Extract hand landmarks from frame"""
     if hands is None:
+        logger.error("Hands detector not initialized")
         return None
     
     try:
+        # Validate frame
+        if frame is None or frame.size == 0:
+            logger.warning("Invalid frame received")
+            return None
+        
+        logger.debug(f"Processing frame: shape={frame.shape}, dtype={frame.dtype}")
+        
+        # Convert BGR to RGB for Mediapipe
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        # Process with Mediapipe
         results = hands.process(rgb_frame)
         
         if results.multi_hand_landmarks:
+            logger.info(f"Hands detected: {len(results.multi_hand_landmarks)}")
             landmarks = []
-            for hand_landmarks in results.multi_hand_landmarks:
+            for hand_idx, hand_landmarks in enumerate(results.multi_hand_landmarks):
+                logger.debug(f"Hand {hand_idx}: {len(hand_landmarks.landmark)} landmarks")
                 for lm in hand_landmarks.landmark:
                     landmarks.extend([lm.x, lm.y, lm.z])
+            
             return np.array(landmarks)
-        return None
+        else:
+            logger.debug("No hands detected in frame")
+            return None
     except Exception as e:
-        logger.error(f"Error extracting landmarks: {e}")
+        logger.error(f"Error extracting landmarks: {e}", exc_info=True)
         return None
 
 @app.route('/')
@@ -124,42 +140,64 @@ def predict():
         
         # Read and convert image
         try:
-            img = Image.open(BytesIO(file.read()))
-            img = img.convert('RGB')
-            frame = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+            img_data = file.read()
+            img = Image.open(BytesIO(img_data))
+            
+            # Convert to RGB if needed
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            
+            # Convert PIL Image to numpy array
+            img_array = np.array(img)
+            
+            # PIL uses RGB, OpenCV uses BGR, so convert
+            frame = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+            
+            logger.info(f"Frame shape: {frame.shape}, dtype: {frame.dtype}")
+            
         except Exception as e:
-            logger.error(f"Error reading image: {e}")
-            return jsonify({'error': 'Invalid image format'}), 400
+            logger.error(f"Error converting image: {e}")
+            return jsonify({'error': f'Invalid image format: {str(e)}'}), 400
         
         # Extract landmarks
         landmarks = extract_landmarks(frame)
         
         if landmarks is not None and len(landmarks) == 63:
             try:
+                logger.info(f"Landmarks extracted: {len(landmarks)} values")
+                
                 # Scale and predict
                 landmarks_scaled = scaler.transform([landmarks])
+                logger.info(f"Scaled landmarks: {landmarks_scaled.shape}")
+                
                 with torch.no_grad():
-                    output = model(torch.tensor(landmarks_scaled, dtype=torch.float32).to(device))
+                    landmarks_tensor = torch.tensor(landmarks_scaled, dtype=torch.float32).to(device)
+                    output = model(landmarks_tensor)
                     pred_idx = torch.argmax(output, dim=1).cpu().numpy()[0]
-                    confidence = torch.softmax(output, dim=1)[0, pred_idx].cpu().item()
+                    
+                    # Get confidence for predicted class
+                    probabilities = torch.softmax(output, dim=1)[0].cpu().numpy()
+                    confidence = float(probabilities[pred_idx])
                 
                 predicted_letter = le.classes_[pred_idx]
+                logger.info(f"Prediction: {predicted_letter}, Confidence: {confidence:.4f}")
                 
                 return jsonify({
                     'letter': predicted_letter,
-                    'confidence': float(confidence)
+                    'confidence': confidence
                 })
             except Exception as e:
-                logger.error(f"Error in prediction: {e}")
-                return jsonify({'error': 'Prediction failed'}), 500
-        
-        return jsonify({
-            'letter': 'No hand detected',
-            'confidence': 0.0
-        })
+                logger.error(f"Error in prediction: {e}", exc_info=True)
+                return jsonify({'error': f'Prediction failed: {str(e)}'}), 500
+        else:
+            logger.info(f"No hand detected or invalid landmarks: {landmarks}")
+            return jsonify({
+                'letter': 'No hand detected',
+                'confidence': 0.0
+            })
     
     except Exception as e:
-        logger.error(f"Unexpected error: {e}")
+        logger.error(f"Unexpected error: {e}", exc_info=True)
         return jsonify({'error': f'Server error: {str(e)}'}), 500
 
 if __name__ == '__main__':

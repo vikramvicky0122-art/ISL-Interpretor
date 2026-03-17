@@ -173,53 +173,72 @@ function stopCamera() {
 
 // Send frames to backend for prediction
 function startPredictions() {
+    let frameCount = 0;
     captureInterval = setInterval(() => {
         if (!isRunning || !video.srcObject) return;
 
         try {
-            // Draw video frame to canvas
-            if (video.videoWidth > 0 && video.videoHeight > 0) {
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
-                let ctx = canvas.getContext("2d");
-                ctx.drawImage(video, 0, 0);
-
-                // Convert canvas to blob and send to server
-                canvas.toBlob(blob => {
-                    if (!blob) return;
-                    
-                    let formData = new FormData();
-                    formData.append("frame", blob, "frame.jpg");
-
-                    fetch("/predict", {
-                        method: "POST",
-                        body: formData
-                    })
-                    .then(response => {
-                        if (!response.ok) {
-                            throw new Error(`HTTP error! status: ${response.status}`);
-                        }
-                        return response.json();
-                    })
-                    .then(data => {
-                        if (data.error) {
-                            statusBox.innerText = "⚠️ Error: " + data.error;
-                        } else {
-                            predictionBox.innerText = data.letter || "No hand detected";
-                            confidenceBox.innerText = data.confidence ? 
-                                `Confidence: ${(data.confidence * 100).toFixed(1)}%` : "";
-                            statusBox.innerText = "🟢 Processing...";
-                        }
-                    })
-                    .catch(error => {
-                        console.error("Fetch error:", error);
-                        statusBox.innerText = "⚠️ Server error: " + error.message;
-                    });
-                }, "image/jpeg", 0.8);
+            // Check if video has valid dimensions
+            if (video.videoWidth <= 0 || video.videoHeight <= 0) {
+                console.warn("Video not yet loaded");
+                return;
             }
+            
+            // Draw video frame to canvas
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            let ctx = canvas.getContext("2d");
+            
+            // Flip horizontally (mirror effect)
+            ctx.translate(canvas.width, 0);
+            ctx.scale(-1, 1);
+            ctx.drawImage(video, 0, 0);
+            ctx.translate(canvas.width, 0);
+            ctx.scale(-1, 1);
+
+            // Convert canvas to blob with higher quality
+            canvas.toBlob(blob => {
+                if (!blob) {
+                    console.warn("Failed to create blob");
+                    return;
+                }
+                
+                frameCount++;
+                console.log(`Sending frame ${frameCount}, size: ${blob.size} bytes`);
+                
+                let formData = new FormData();
+                formData.append("frame", blob, "frame.jpg");
+
+                fetch("/predict", {
+                    method: "POST",
+                    body: formData
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.error) {
+                        console.error("Server error:", data.error);
+                        statusBox.innerText = "⚠️ " + data.error;
+                    } else {
+                        console.log("Prediction:", data.letter, `(${(data.confidence*100).toFixed(1)}%)`);
+                        predictionBox.innerText = data.letter || "No hand detected";
+                        confidenceBox.innerText = data.confidence ? 
+                            `Confidence: ${(data.confidence * 100).toFixed(1)}%` : "";
+                        statusBox.innerText = "🟢 Processing frame " + frameCount;
+                    }
+                })
+                .catch(error => {
+                    console.error("Fetch error:", error);
+                    statusBox.innerText = "⚠️ Network error: " + error.message;
+                });
+            }, "image/jpeg", 0.95); // Higher quality JPEG
         } catch (e) {
-            console.error("Prediction error:", e);
-            statusBox.innerText = "⚠️ Error: " + e.message;
+            console.error("Frame capture error:", e);
+            statusBox.innerText = "⚠️ Capture error: " + e.message;
         }
     }, 500); // Send frame every 500ms
 }
