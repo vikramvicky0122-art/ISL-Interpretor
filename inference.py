@@ -9,7 +9,7 @@ import os
 
 # Model class from train
 class ISLClassifier(nn.Module):
-    def __init__(self, input_dim=225, num_classes=26):
+    def __init__(self, input_dim=63, num_classes=26):
         super().__init__()
         self.fc = nn.Sequential(
             nn.Linear(input_dim, 256),

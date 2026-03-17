@@ -173,14 +173,23 @@ def predict():
                 with torch.no_grad():
                     landmarks_tensor = torch.tensor(landmarks_scaled, dtype=torch.float32).to(device)
                     output = model(landmarks_tensor)
-                    pred_idx = torch.argmax(output, dim=1).cpu().numpy()[0]
                     
-                    # Get confidence for predicted class
+                    # Get probabilities for all classes
                     probabilities = torch.softmax(output, dim=1)[0].cpu().numpy()
+                    
+                    # Get top 3 predictions
+                    top_3_idx = np.argsort(probabilities)[::-1][:3]
+                    top_3_probs = probabilities[top_3_idx]
+                    
+                    pred_idx = top_3_idx[0]
                     confidence = float(probabilities[pred_idx])
                 
                 predicted_letter = le.classes_[pred_idx]
-                logger.info(f"Prediction: {predicted_letter}, Confidence: {confidence:.4f}")
+                
+                # Log all top predictions for debugging
+                logger.info(f"Top 3 predictions:")
+                for i, idx in enumerate(top_3_idx):
+                    logger.info(f"  {i+1}. {le.classes_[idx]}: {probabilities[idx]:.4f}")
                 
                 return jsonify({
                     'letter': predicted_letter,
