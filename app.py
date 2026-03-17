@@ -59,8 +59,8 @@ class ISLClassifier(nn.Module):
 try:
     model = ISLClassifier(input_dim=63).to(device)
     model.load_state_dict(torch.load('models/isl_classifier.pth', map_location=device))
-    model.eval()
-    print("✓ Model loaded and ready")
+    model.eval()  # CRITICAL: Disable dropout for inference
+    print("✓ Model loaded and set to eval mode")
 except Exception as e:
     logger.error(f"Failed to load model: {e}")
     model = None
@@ -172,6 +172,12 @@ def predict():
                 
                 with torch.no_grad():
                     landmarks_tensor = torch.tensor(landmarks_scaled, dtype=torch.float32).to(device)
+                    
+                    # Debug: Log the actual scaled values
+                    logger.debug(f"Input shape to model: {landmarks_tensor.shape}")
+                    logger.debug(f"First 5 scaled values: {landmarks_scaled[0][:5]}")
+                    
+                    # Forward pass
                     output = model(landmarks_tensor)
                     
                     # Get probabilities for all classes
@@ -187,7 +193,7 @@ def predict():
                 predicted_letter = le.classes_[pred_idx]
                 
                 # Log all top predictions for debugging
-                logger.info(f"Top 3 predictions:")
+                logger.info(f"Prediction made:")
                 for i, idx in enumerate(top_3_idx):
                     logger.info(f"  {i+1}. {le.classes_[idx]}: {probabilities[idx]:.4f}")
                 
